@@ -1,4 +1,4 @@
-import {default as ContainerContract, ConcreteBuildable, ConcreteClass} from "../Contracts/Container/Container"
+import {default as ContainerContract, ConcreteBuildable, ConcreteClass} from "./Contracts/Container"
 import BindingResolutionError from "./BindingResolutionError";
 
 export default class Container implements ContainerContract {

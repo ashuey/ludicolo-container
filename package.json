@@ -2,6 +2,9 @@
   "name": "ludicolo-container",
   "version": "1.0.0",
   "main": "index.js",
-  "license": "UNLICENSED",
-  "private": true
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^3.7.2"
+  },
+  "files": ["lib/**/*"]
 }
