@@ -1,4 +1,4 @@
-import ContainerContract from "./Contracts/Container"
+import ContainerInterface from "./Interfaces/Container"
 import { Closure, Concrete, Newable, ServiceIdentifier } from "./Types/types";
 import BindingResolutionError from "./BindingResolutionError";
 
@@ -7,7 +7,7 @@ interface Binding {
     shared: boolean;
 }
 
-export default class Container implements ContainerContract {
+export default class Container implements ContainerInterface {
     protected bindings = new Map<ServiceIdentifier, Binding>();
 
     protected instances = new Map<ServiceIdentifier, any>();
