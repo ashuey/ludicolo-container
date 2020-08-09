@@ -1,157 +1,168 @@
-import {default as ContainerContract, ConcreteBuildable, ConcreteClass} from "./Contracts/Container"
+import ContainerContract from "./Contracts/Container"
+import { Closure, Concrete, Newable, ServiceIdentifier } from "./Types/types";
 import BindingResolutionError from "./BindingResolutionError";
 
+interface Binding {
+    concrete: Concrete;
+    shared: boolean;
+}
+
 export default class Container implements ContainerContract {
-    protected static instance: ContainerContract;
+    protected bindings = new Map<ServiceIdentifier, Binding>();
 
-    protected bindings: object = {};
+    protected instances = new Map<ServiceIdentifier, any>();
 
-    protected instances: object = {};
+    protected aliases = new Map<ServiceIdentifier, ServiceIdentifier>();
 
-    protected aliases: object = {};
+    protected extenders = new Map<ServiceIdentifier, Closure<any>[]>();
 
-    alias(abstract_: string, alias: string): void {
-        this.aliases[alias] = abstract_;
+    public bound(abstract_: ServiceIdentifier): boolean {
+        return this.bindings.has(abstract_) ||
+            this.instances.has(abstract_) ||
+            this.isAlias(abstract_);
     }
 
-    bind(abstract_: string, concrete: ConcreteBuildable, ...dependency: string[]): void {
-        this.dropStaleInstances(abstract_);
-
-        this.bindings[abstract_] = {
-            concrete: concrete,
-            shared: false,
-            dependencies: dependency
-        };
-    }
-
-    bound(abstract_: string): boolean {
+    public resolved(abstract_: ServiceIdentifier): boolean {
         abstract_ = this.getAlias(abstract_);
 
-        return abstract_ in this.bindings || abstract_ in this.instances;
+        return this.instances.has(abstract_);
     }
 
-    flush(): void {
-        this.aliases = {};
-        this.bindings = [];
-        this.instances = {};
+    public isShared(abstract_: ServiceIdentifier): boolean {
+        return this.instances.has(abstract_) ||
+            this.bindings.has(abstract_) &&
+            this.bindings.get(abstract_).shared;
     }
 
-    getAlias(abstract_: string): string {
-        if (!(abstract_ in this.aliases)) {
-            return abstract_;
+    public isAlias(abstract_: ServiceIdentifier): boolean {
+        return this.aliases.has(abstract_);
+    }
+
+    public bind(abstract_: ServiceIdentifier, concrete: Concrete<this> = null, shared: boolean = false): void {
+        this.dropStaleInstances(abstract_);
+
+        if (concrete === null) {
+            if (!this.isNewable(abstract_)) {
+                throw new Error(`${String(abstract_)} cannot be bound to itself, as is not instantiable.`);
+            }
+
+            concrete = abstract_;
         }
 
-        return this.getAlias(abstract_);
+        this.bindings.set(abstract_, {
+            concrete,
+            shared
+        });
     }
 
-    instance(abstract_: string, instance: any): any {
-        delete this.aliases[abstract_];
+    public bindIf(abstract_: ServiceIdentifier, concrete: Concrete<this> = null, shared: boolean = false): void {
+        if (!this.bound(abstract_)) {
+            this.bind(abstract_, concrete, shared);
+        }
+    }
 
-        this.instances[abstract_] = instance;
+    public singleton(abstract_: ServiceIdentifier, concrete: Concrete<this> = null): void {
+        this.bind(abstract_, concrete, true);
+    }
+
+    public extend<T = any>(abstract_: ServiceIdentifier, closure: Closure<T>): void {
+        abstract_ = this.getAlias(abstract_);
+
+        if (this.instances.has(abstract_)) {
+            this.instances.set(abstract_, closure(this.instances.get(abstract_), this));
+        } else {
+            if (!this.extenders.has(abstract_)) {
+                this.extenders.set(abstract_, []);
+            }
+
+            this.extenders.get(abstract_).push(closure);
+        }
+    }
+
+    public instance<T>(abstract_: ServiceIdentifier, instance: T): T {
+        this.aliases.delete(abstract_);
+
+        this.instances.set(abstract_, instance);
 
         return instance;
     }
 
-    isAlias(name: string): boolean {
-        return name in this.aliases;
+    public alias(abstract_: ServiceIdentifier, alias: ServiceIdentifier): void {
+        this.aliases.set(alias, abstract_);
     }
 
-    isShared(abstract_: string): boolean {
+    public make<T = any>(abstract_: ServiceIdentifier, ...parameters: any[]): T {
+        return this.resolve(abstract_, ...parameters);
+    }
+
+    public resolve<T = any>(abstract_: ServiceIdentifier, ...parameters: any[]): T {
         abstract_ = this.getAlias(abstract_);
 
-        return abstract_ in this.instances || (abstract_ in this.bindings && this.bindings[abstract_].shared == true);
-    }
-
-    make(abstract_: string, ...parameters: any[]): any {
-        return this.resolve(abstract_, parameters);
-    }
-
-    resolve(abstract_: string, ...parameters: any[]): any {
-        abstract_ = this.getAlias(abstract_);
-
-        if (abstract_ in this.instances) {
-            return this.instances[abstract_];
+        if (this.instances.has(abstract_)) {
+            return this.instances.get(abstract_);
         }
 
-        if (!(abstract_ in this.bindings)) {
-            throw new BindingResolutionError(`Target ${abstract_} is not instantiable.`)
+        if (!(this.bindings.has(abstract_))) {
+            throw new BindingResolutionError(`Target ${String(abstract_)} is not instantiable.`)
         }
 
-        const binding = this.bindings[abstract_];
+        const binding = this.bindings.get(abstract_);
 
-        const object_ = this.build(binding);
+        const object_ = this.build<T>(binding.concrete, parameters);
 
         if (this.isShared(abstract_)) {
-            this.instances[abstract_] = object_;
+            this.instances.set(abstract_, object_);
         }
 
         return object_;
     }
 
-    resolved(abstract_: string): boolean {
+    protected build<T>(concrete: Concrete<this>, parameters: any[]): T {
+        if (this.isNewable(concrete)) {
+            return new concrete(...parameters);
+        }
+
+        return concrete(this, ...parameters);
+    }
+
+    public getAlias(abstract_: ServiceIdentifier): ServiceIdentifier {
+        if (!this.aliases.has(abstract_)) {
+            return abstract_;
+        }
+
+        if (this.aliases.get(abstract_) === abstract_) {
+            throw new Error(`${String(abstract_)} is aliased to itself.`)
+        }
+
+        return this.getAlias(this.aliases.get(abstract_));
+    }
+
+    public forgetExtenders(abstract_: ServiceIdentifier): void {
         abstract_ = this.getAlias(abstract_);
 
-        return abstract_ in this.instances;
+        this.extenders.delete(abstract_);
     }
 
-    singleton(abstract_: string, concrete: ConcreteBuildable, ...dependency: string[]): void {
-        this.dropStaleInstances(abstract_);
-
-        this.bindings[abstract_] = {
-            concrete: concrete,
-            shared: true,
-            dependencies: dependency
-        };
+    protected dropStaleInstances(abstract_: ServiceIdentifier) {
+        this.instances.delete(abstract_);
+        this.aliases.delete(abstract_);
     }
 
-    protected dropStaleInstances(abstract_: string): void {
-        delete this.instances[abstract_];
-        delete this.aliases[abstract_];
+    public forgetInstance(abstract_: ServiceIdentifier): void {
+        this.instances.delete(abstract_);
     }
 
-    protected build(binding: Binding, ...parameters: any[]): any {
-        const resolved = this.resolveDependencies(binding.dependencies);
-
-        const resolvedParameters = resolved.concat(parameters);
-
-        if (this.isConcreteClass(binding.concrete)) {
-            return new binding.concrete(...resolvedParameters);
-        }
-
-        return binding.concrete(...resolvedParameters);
+    public forgetInstances(): void {
+        this.instances.clear();
     }
 
-    protected resolveDependencies(dependencies: string[]) {
-        return dependencies.map(dependency => this.resolve(dependency));
+    public flush(): void {
+        this.bindings.clear();
+        this.instances.clear();
+        this.aliases.clear();
     }
 
-    // noinspection JSMethodCanBeStatic
-    protected isConcreteClass(f: ConcreteBuildable): f is ConcreteClass {
+    protected isNewable(f: any): f is Newable {
         return typeof f === 'function' && /^\s*class\s+/.test(f.toString());
     }
-
-    /**
-     * Get the globally available instance of the container
-     */
-    public static getInstance(): ContainerContract {
-        if (!Container.instance) {
-            Container.instance = new Container();
-        }
-
-        return Container.instance;
-    }
-
-    /**
-     * Set the globally available instance of the container
-     * @param container
-     */
-    public static setInstance(container: ContainerContract = null) {
-        Container.instance = container;
-    }
-}
-
-interface Binding {
-    concrete: ConcreteBuildable;
-    shared: boolean;
-    dependencies: string[];
 }
